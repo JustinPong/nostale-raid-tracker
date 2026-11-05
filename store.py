@@ -13,6 +13,7 @@ DEFAULT = {
                  "boxes": 1, "coins": 1, "rounding": "half_up"},
     "players": [],
     "aliases": {},
+    "mail": logic.MAIL_DEFAULT,
     "sessions": [],
 }
 
@@ -20,12 +21,9 @@ DEFAULT = {
 class Store:
     def __init__(self, path: Path):
         self.path = path
-        if path.exists():
-            self.data = json.loads(path.read_text(encoding="utf-8"))
-            for key, value in DEFAULT.items():
-                self.data.setdefault(key, value)
-        else:
-            self.data = json.loads(json.dumps(DEFAULT))
+        self.data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+        for key, value in DEFAULT.items():
+            self.data.setdefault(key, json.loads(json.dumps(value)))  # deep copy: never share DEFAULT's dicts
 
     def save(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -104,7 +102,8 @@ class Store:
                     name, flag = logic.clean_name(row.candidates[0]) or "?", "new"
             member = by_name.get(name)
             if member is None:
-                member = {"name": name, "runs": 0, "left": False, "returned": False, "ocr": [], "flag": flag}
+                member = {"name": name, "runs": 0, "left": False, "returned": False, "mailed": False,
+                          "ocr": [], "flag": flag}
                 session["members"].append(member)
                 by_name[name] = member
             elif row.exact:

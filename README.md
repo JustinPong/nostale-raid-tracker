@@ -20,7 +20,9 @@ Needs Windows 10/11 with the Traditional Chinese OCR language (comes with the zh
 1. 「＋ 新場次」 for each new raid streak.
 2. In game open 連戰統計 → `Win+Shift+S` → snip the whole window → back in the app press `Ctrl+V`. Do the same for page 2.
 3. ⚠ rows = name needs a check. The right panel shows that row of the screenshot (zoomed name + highlighted row; 「放大」 for a big view). Fix the name, press Enter → jumps to the next ⚠ row. Or 「名字全部確認」 if all are right. Fixes are remembered, so the same misreading is auto-corrected next time.
-4. Click the 已還 box (or Space) when someone hands their share back. Right-click a row for 設為我的名字 / 確認名字 / 刪除. 「欠款總覽」 shows everything still owed across all sessions.
+4. Click the 已還 box (or Space) when someone hands their share back; unticking asks first. Right-click a row for 設為我的名字 / 確認名字 / 刪除.
+5. Chasing people: filter 「未寄信」, pick a player, and the right panel's 寄信 section has 標題 / 收件人 / 內容 ready to 複製 into the in-game mail. Tick 已寄信 once sent. The text comes from an editable template (「編輯範本」, placeholders `{副本} {名字} {完成次數} {應還箱子} {應還硬幣} {日期}`), default `{副本}{完成次數}回{應還箱子}` → 「不死龍110回77」.
+6. 「欠款總覽」 lists every unpaid share across all sessions, one row per player per raid; tick 已寄信 there, double-click to jump to the session.
 
 Owed per player = 完成次數 × 每場箱子/硬幣 × 歸還比例%, rounded per the 小數處理 setting (⚙ 設定). Your own row and players with nothing to hand back are never billed.
 

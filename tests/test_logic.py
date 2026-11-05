@@ -45,8 +45,8 @@ class ResolveTest(unittest.TestCase):
 
 
 def session(**kw):
-    s = {"games": 100, "team_size": 15, "percent": 70, "boxes": 1, "coins": 1,
-         "rounding": "half_up", "me": "我", "members": []}
+    s = {"raid": "不死龍", "created": "2026-11-05 20:00", "games": 100, "team_size": 15, "percent": 70,
+         "boxes": 1, "coins": 1, "rounding": "half_up", "me": "我", "members": []}
     s.update(kw)
     return s
 
@@ -70,11 +70,30 @@ class SummaryTest(unittest.TestCase):
         self.assertFalse(logic.owes_something(s, s["members"][0]))
         self.assertEqual([r["name"] for r in logic.outstanding([s])], ["b"])
 
-    def test_outstanding_across_sessions(self):
-        s1 = session(members=[member("a", 100), member("b", 100, returned=True)])
-        s2 = session(members=[member("a", 50), member("我", 50)])
-        rows = logic.outstanding([s1, s2])
-        self.assertEqual(rows, [{"name": "a", "sessions": 2, "boxes": 105, "coins": 105}])
+    def test_outstanding_one_row_per_session(self):
+        s1 = session(raid="不死龍", created="2026-11-01 20:00",
+                     members=[member("a", 100), member("b", 100, returned=True)])
+        s2 = session(raid="冰龍", created="2026-11-02 20:00", members=[member("a", 50), member("我", 50)])
+        rows = logic.outstanding([s2, s1])
+        self.assertEqual([(r["name"], r["raid"], r["boxes"]) for r in rows], [("a", "不死龍", 70), ("a", "冰龍", 35)])
+
+    def test_needs_mail(self):
+        s = session(members=[member("a", 100), member("b", 100, returned=True), member("c", 0), member("d", 100)])
+        s["members"][3]["mailed"] = True
+        self.assertEqual([m["name"] for m in s["members"] if logic.needs_mail(s, m)], ["a"])
+
+
+class MailTest(unittest.TestCase):
+    def test_default_template(self):
+        s = session(raid="不死龍", created="2026-11-05 21:00")
+        m = member("BoomBoom", 110)
+        self.assertEqual(logic.render_mail(logic.MAIL_DEFAULT["title"], s, m), "不死龍110回77")
+        self.assertEqual(logic.render_mail(logic.MAIL_DEFAULT["body"], s, m), "不死龍110回77 可以寄給我嗎 謝謝")
+
+    def test_all_fields_and_unknown_braces(self):
+        s = session(raid="冰龍", created="2026-11-05 21:00", boxes=2)
+        text = logic.render_mail("{名字} {日期} {應還箱子}/{應還硬幣} {不明}", s, member("小氣", 10))
+        self.assertEqual(text, "小氣 2026-11-05 14/7 {不明}")
 
 
 class MergeTest(unittest.TestCase):

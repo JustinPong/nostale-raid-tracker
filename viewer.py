@@ -27,7 +27,7 @@ class DetailPanel(ttk.Frame):
         self.loading = False
         self._cache: dict[str, Image.Image] = {}
         self._photos = {}  # Tk drops images that aren't referenced from Python
-        self._scale, self._shot, self._job = 1.0, None, None
+        self._scale, self._shot, self._top, self._job = 1.0, None, 0, None
 
         self.placeholder = ttk.Label(self, text=PLACEHOLDER, justify="center", foreground=theme.MUTED,
                                      font=theme.font(11), width=30, anchor="center")
@@ -43,7 +43,7 @@ class DetailPanel(ttk.Frame):
                              anchor="w", padx=px(4), pady=px(4))
         self.zoom.pack(fill="x", pady=(px(4), 0))
 
-        self._section("OCR 讀到（點一下套用）")
+        self.chips_head = self._section("OCR 讀到（點一下套用）")
         self.chips = ttk.Frame(self.body)
         self.chips.pack(fill="x", pady=(px(4), 0))
 
@@ -60,21 +60,36 @@ class DetailPanel(ttk.Frame):
 
         grid = ttk.Frame(self.body)
         grid.pack(fill="x", pady=(px(12), 0))
-        self.runs_var, self.left_var, self.ret_var = tk.StringVar(), tk.BooleanVar(), tk.BooleanVar()
+        self.runs_var, self.ret_var, self.mail_var = tk.StringVar(), tk.BooleanVar(), tk.BooleanVar()
         ttk.Label(grid, text="完成次數").grid(row=0, column=0, sticky="w")
         self.runs_box = ttk.Spinbox(grid, textvariable=self.runs_var, from_=0, to=9999, width=6)
         self.runs_box.grid(row=0, column=1, sticky="w", padx=(px(8), px(18)))
-        ttk.Checkbutton(grid, text="已離隊", variable=self.left_var, style="Switch.TCheckbutton").grid(
-            row=0, column=2, sticky="w")
         self.ret_check = ttk.Checkbutton(grid, text="已歸還", variable=self.ret_var, style="Switch.TCheckbutton")
         self.ret_check.grid(row=1, column=0, columnspan=2, sticky="w", pady=(px(10), 0))
+        self.mail_check = ttk.Checkbutton(grid, text="已寄信", variable=self.mail_var, style="Switch.TCheckbutton")
+        self.mail_check.grid(row=1, column=2, sticky="w", pady=(px(10), 0))
         self.owed = ttk.Label(grid, foreground=theme.AMBER, font=theme.font(12, "bold"))
         self.owed.grid(row=2, column=0, columnspan=3, sticky="w", pady=(px(8), 0))
         self.runs_var.trace_add("write", lambda *_: self._edited("runs"))
-        self.left_var.trace_add("write", lambda *_: self._edited("left"))
         self.ret_var.trace_add("write", lambda *_: self._edited("returned"))
+        self.mail_var.trace_add("write", lambda *_: self._edited("mailed"))
 
-        shot_head = self._section("完整截圖（點一行可跳到該玩家）")
+        mail_head = self._section("寄信（複製後貼到遊戲信件）")
+        ttk.Button(mail_head, text="編輯範本", command=app.open_mail_templates).pack(side="right")
+        mail = ttk.Frame(self.body)
+        mail.pack(fill="x", pady=(px(4), 0))
+        mail.columnconfigure(1, weight=1)
+        self.mail_fields = {}
+        for r, (key, label) in enumerate((("title", "標題"), ("to", "收件人"), ("body", "內容"))):  # in-game order
+            ttk.Label(mail, text=label, foreground=theme.MUTED).grid(row=r, column=0, sticky="nw", pady=px(2))
+            text = ttk.Label(mail, wraplength=width - px(110), justify="left")
+            text.grid(row=r, column=1, sticky="w", padx=px(8), pady=px(2))
+            link = ttk.Label(mail, text="複製", cursor="hand2", font=theme.font(10, "underline"))
+            link.grid(row=r, column=2, sticky="ne", pady=px(2))
+            link.bind("<Button-1>", lambda e, k=key, l=label: self._copy(k, l))
+            self.mail_fields[key] = (text, link)
+
+        shot_head = self._section("截圖（點一行可跳到該玩家）")
         ttk.Button(shot_head, text="放大", command=self.open_large).pack(side="right")
         self.canvas = tk.Canvas(self.body, bg=theme.BG, highlightthickness=0, cursor="hand2",
                                 width=width, height=px(40))
@@ -103,9 +118,16 @@ class DetailPanel(ttk.Frame):
         self.loading = True
         self.name_var.set(member["name"])
         self.runs_var.set(str(member["runs"]))
-        self.left_var.set(member["left"])
         self.ret_var.set(member["returned"])
+        self.mail_var.set(member.get("mailed", False))
         self.loading = False
+        if member.get("flag"):  # OCR alternatives only matter while the name is unconfirmed
+            pady = (self.app.px(10), 0)
+            self.chips_head.pack(fill="x", pady=pady, after=self.zoom)
+            self.chips.pack(fill="x", pady=(self.app.px(4), 0), after=self.chips_head)
+        else:
+            self.chips_head.pack_forget()
+            self.chips.pack_forget()
         self._build_chips()
         self.refresh_light()
         self._render()
@@ -117,24 +139,29 @@ class DetailPanel(ttk.Frame):
             return
         is_me = m["name"] == s["me"]
         self.title.configure(text=m["name"] + ("（我）" if is_me else ""))
-        bits = ["已離隊" if m["left"] else "隊伍中", f"完成 {m['runs']} 場"]
+        bits = [f"完成 {m['runs']} 場"]
         if m.get("flag"):
             bits.append("⚠ 名字未確認")
         self.sub.configure(text="　·　".join(bits), foreground=theme.AMBER if m.get("flag") else theme.MUTED)
         b, c = logic.member_owed(s, m)
-        if is_me or not (b or c):
-            self.owed.configure(text="自己，不用還" if is_me else "沒有要還的")
-            self.ret_check.state(["disabled"])
-        else:
-            self.owed.configure(text=f"應還　箱子 {b}　·　硬幣 {c}")
-            self.ret_check.state(["!disabled"])
+        owes = not is_me and bool(b or c)
+        self.owed.configure(text=f"應還　箱子 {b}　·　硬幣 {c}" if owes else
+                            ("自己，不用還" if is_me else "沒有要還的"))
+        for widget in (self.ret_check, self.mail_check):
+            widget.state(["!disabled"] if owes else ["disabled"])
+        mail = self.app.store.data["mail"]
+        texts = {"to": m["name"], "title": logic.render_mail(mail["title"], s, m),
+                 "body": logic.render_mail(mail["body"], s, m)}
+        for key, (label, link) in self.mail_fields.items():
+            label.configure(text=texts[key] if owes else "—")
+            link.configure(foreground=theme.ACCENT if owes else theme.MUTED)
         self.loading = True
         if self.runs_var.get() != str(m["runs"]):
             self.runs_var.set(str(m["runs"]))
-        if self.left_var.get() != m["left"]:
-            self.left_var.set(m["left"])
         if self.ret_var.get() != m["returned"]:
             self.ret_var.set(m["returned"])
+        if self.mail_var.get() != m.get("mailed", False):
+            self.mail_var.set(m.get("mailed", False))
         self.loading = False
 
     def focus_name(self):
@@ -157,10 +184,18 @@ class DetailPanel(ttk.Frame):
             raw = self.runs_var.get().strip()
             if raw.isdigit() and int(raw) != self.member["runs"]:
                 self.app.update_member(self.member, runs=int(raw))
-        elif key == "left":
-            self.app.update_member(self.member, left=self.left_var.get())
+        elif key == "mailed":
+            self.app.set_mailed([self.member], self.mail_var.get())
         else:
             self.app.set_returned([self.member], self.ret_var.get())
+
+    def _copy(self, key, label):
+        if self.member is None or self.member["name"] == self.session["me"] \
+                or not logic.owes_something(self.session, self.member):
+            return
+        s, m, mail = self.session, self.member, self.app.store.data["mail"]
+        text = m["name"] if key == "to" else logic.render_mail(mail[key], s, m)
+        self.app.copy_text(text, label)
 
     def _build_chips(self):
         for w in self.chips.winfo_children():
@@ -214,14 +249,21 @@ class DetailPanel(ttk.Frame):
                                                                 max(1, int(cell.height * k))), Image.LANCZOS))
         self.zoom.configure(image=self._photos["zoom"], text="")
 
-        # full screenshot with the row highlighted, fitted to the space left in the panel
-        room = self.body.winfo_height() - self.canvas.winfo_y() - px(6)
-        k = min(width / img.width, max(room, px(160)) / img.height, 2.0)
-        size = (max(1, int(img.width * k)), max(1, int(img.height * k)))
-        self._photos["shot"] = ImageTk.PhotoImage(_marked(img, m["box"]).resize(size, Image.LANCZOS))
+        # screenshot at full panel width with the row highlighted; if it doesn't fit, the slice around the row
+        room = max(self.body.winfo_height() - self.canvas.winfo_y() - px(6), px(120))
+        k = min(width / img.width, 2.0)
+        y0, y1 = 0, img.height
+        if img.height * k > room:
+            span = room / k
+            middle = (m["box"][1] + m["box"][3]) / 2
+            y0 = int(max(0, min(img.height - span, middle - span / 2)))
+            y1 = int(y0 + span)
+        part = _marked(img, m["box"]).crop((0, y0, img.width, y1))
+        size = (max(1, int(part.width * k)), max(1, int(part.height * k)))
+        self._photos["shot"] = ImageTk.PhotoImage(part.resize(size, Image.LANCZOS))
         self.canvas.configure(width=size[0], height=size[1])
         self.canvas.create_image(0, 0, anchor="nw", image=self._photos["shot"])
-        self._scale, self._shot = k, m["shot"]
+        self._scale, self._shot, self._top = k, m["shot"], y0
 
     def open_large(self):
         m = self.member
@@ -252,7 +294,7 @@ class DetailPanel(ttk.Frame):
     def on_canvas_click(self, event):
         if not self._shot or self.session is None:
             return
-        y = event.y / self._scale
+        y = self._top + event.y / self._scale
         for m in self.session["members"]:
             box = m.get("box")
             if m.get("shot") == self._shot and box and box[1] <= y <= box[3]:

@@ -80,15 +80,30 @@ def session_summary(session: dict) -> dict:
 
 
 def outstanding(sessions: list[dict]) -> list[dict]:
-    """Per player totals of everything not yet returned, across all sessions."""
-    totals = {}
+    """Everything not yet returned, one row per player per session, grouped by player."""
+    rows = []
     for s in sessions:
         for m in s["members"]:
             b, c = member_owed(s, m)
             if m["returned"] or not (b or c):
                 continue
-            t = totals.setdefault(m["name"], {"name": m["name"], "sessions": 0, "boxes": 0, "coins": 0})
-            t["sessions"] += 1
-            t["boxes"] += b
-            t["coins"] += c
-    return sorted(totals.values(), key=lambda t: (-t["boxes"], t["name"]))
+            rows.append({"session": s, "member": m, "name": m["name"], "raid": s["raid"], "created": s["created"],
+                         "runs": m["runs"], "boxes": b, "coins": c, "mailed": m.get("mailed", False)})
+    return sorted(rows, key=lambda r: (r["name"], r["created"]))
+
+
+def needs_mail(session: dict, member: dict) -> bool:
+    return owes_something(session, member) and not member["returned"] and not member.get("mailed", False)
+
+
+MAIL_DEFAULT = {"title": "{副本}{完成次數}回{應還箱子}", "body": "{副本}{完成次數}回{應還箱子} 可以寄給我嗎 謝謝"}
+MAIL_FIELDS = ("副本", "名字", "完成次數", "應還箱子", "應還硬幣", "日期")
+
+
+def render_mail(template: str, session: dict, member: dict) -> str:
+    """Fill {副本} {名字} {完成次數} {應還箱子} {應還硬幣} {日期}; anything else in braces is left as typed."""
+    b, c = member_owed(session, member)
+    values = dict(zip(MAIL_FIELDS, (session["raid"], member["name"], member["runs"], b, c, session["created"][:10])))
+    for key, value in values.items():
+        template = template.replace("{" + key + "}", str(value))
+    return template

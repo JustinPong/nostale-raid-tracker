@@ -147,14 +147,15 @@ class DetailPanel(ttk.Frame):
         owes = not is_me and bool(b or c)
         self.owed.configure(text=f"應還　箱子 {b}　·　硬幣 {c}" if owes else
                             ("自己，不用還" if is_me else "沒有要還的"))
-        for widget in (self.ret_check, self.mail_check):
-            widget.state(["!disabled"] if owes else ["disabled"])
+        mailable = owes and not m["returned"]  # returned: nothing left to remind them about
+        self.ret_check.state(["!disabled"] if owes else ["disabled"])
+        self.mail_check.state(["!disabled"] if mailable else ["disabled"])
         mail = self.app.store.data["mail"]
         texts = {"to": m["name"], "title": logic.render_mail(mail["title"], s, m),
                  "body": logic.render_mail(mail["body"], s, m)}
         for key, (label, link) in self.mail_fields.items():
-            label.configure(text=texts[key] if owes else "—")
-            link.configure(foreground=theme.ACCENT if owes else theme.MUTED)
+            label.configure(text=texts[key] if mailable else "—")
+            link.configure(foreground=theme.ACCENT if mailable else theme.MUTED)
         self.loading = True
         if self.runs_var.get() != str(m["runs"]):
             self.runs_var.set(str(m["runs"]))
@@ -190,8 +191,7 @@ class DetailPanel(ttk.Frame):
             self.app.set_returned([self.member], self.ret_var.get())
 
     def _copy(self, key, label):
-        if self.member is None or self.member["name"] == self.session["me"] \
-                or not logic.owes_something(self.session, self.member):
+        if self.member is None or not logic.can_mail(self.session, self.member):
             return
         s, m, mail = self.session, self.member, self.app.store.data["mail"]
         text = m["name"] if key == "to" else logic.render_mail(mail[key], s, m)

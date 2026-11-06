@@ -1,10 +1,9 @@
 """副本代打記帳: paste 連戰統計 screenshots, track who still owes their share of boxes/coins."""
-import csv
 import queue
 import threading
 import tkinter as tk
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
+from tkinter import messagebox, ttk
 
 from PIL import Image, ImageGrab, ImageTk
 
@@ -25,7 +24,7 @@ OVER_COLS = (("name", "名字", 200), ("raid", "副本", 110), ("when", "日期"
              ("boxes", "欠箱子", 90), ("coins", "欠硬幣", 90), ("mail", "已寄信", 70))
 INT_FIELDS = ("games", "team_size", "percent", "boxes", "coins")
 TEXT_INPUTS = (tk.Entry, ttk.Entry, ttk.Combobox, ttk.Spinbox, tk.Spinbox, tk.Text)
-FILTERS = (("all", "全部"), ("due", "未還"), ("unmailed", "未寄信"), ("check", "要檢查"))
+FILTERS = (("all", "全部"), ("due", "未還"), ("unmailed", "未寄信"))
 EMPTY_HINT = ("還沒有資料\n\n① 遊戲內打開「連戰統計」\n② Win+Shift+S 截取整個視窗\n"
               "③ 回到這裡按 Ctrl+V（第 2 頁照樣貼上）")
 
@@ -154,12 +153,7 @@ class App:
         menu = theme.menu(more)
         menu.add_command(label="新增玩家", command=self.add_member)
         menu.add_command(label="全部標記已還", command=self.all_returned)
-        menu.add_command(label="刪除選取的玩家", command=self.delete_members)
-        menu.add_separator()
-        menu.add_command(label="編輯信件範本…", command=self.open_mail_templates)
-        menu.add_command(label="匯出 CSV…", command=self.export_csv)
         more["menu"] = menu
-        ttk.Button(bar, text="✓ 名字全部確認", command=self.confirm_all).pack(side="right", padx=px(8))
 
         table = ttk.Frame(main)
         table.pack(fill="both", expand=True)
@@ -262,8 +256,7 @@ class App:
         members = s["members"] if s else []
         counts = {"all": len(members),
                   "due": sum(not m["returned"] and logic.owes_something(s, m) for m in members),
-                  "unmailed": sum(logic.needs_mail(s, m) for m in members),
-                  "check": sum(bool(m.get("flag")) for m in members)}
+                  "unmailed": sum(logic.needs_mail(s, m) for m in members)}
         for value, text in FILTERS:
             self.filter_buttons[value].configure(text=f"{text}  {counts[value]}")
         if not members:
@@ -274,16 +267,14 @@ class App:
         query, mode, shown = self.search_var.get().strip().lower(), self.filter_var.get(), 0
         for i, m in enumerate(members):
             is_me, owes = m["name"] == s["me"], logic.owes_something(s, m)
-            hidden = {"due": not owes or m["returned"], "unmailed": not logic.needs_mail(s, m),
-                      "check": not m.get("flag")}.get(mode, False)
-            if hidden:
+            if {"due": not owes or m["returned"], "unmailed": not logic.needs_mail(s, m)}.get(mode, False):
                 continue
             if query and query not in m["name"].lower() and not any(query in o.lower() for o in m.get("ocr", [])):
                 continue
             b, c = logic.member_owed(s, m)
             name = ("⚠ " if m.get("flag") else "") + m["name"] + ("（我）" if is_me else "")
-            box = lambda on: ("☑" if on else "☐") if owes else "—"
-            values = (box(m["returned"]), box(m.get("mailed", False)), name, m["runs"],
+            box = lambda on, active: ("☑" if on else "☐") if active else "—"
+            values = (box(m["returned"], owes), box(m.get("mailed", False), logic.can_mail(s, m)), name, m["runs"],
                       "—" if is_me else b, "—" if is_me else c)
             tags = ["odd"] if shown % 2 else []
             tags.append("muted" if not owes else "done" if m["returned"] else "")
@@ -514,8 +505,9 @@ class App:
         menu.delete(0, "end")
         menu.add_command(label="標記未還" if m["returned"] else "標記已還",
                          command=lambda: self.toggle_returned(self.tree.selection()))
-        menu.add_command(label="標記未寄信" if m.get("mailed") else "標記已寄信",
-                         command=lambda: self.toggle_mailed(self.tree.selection()))
+        if logic.can_mail(self.current, m):
+            menu.add_command(label="標記未寄信" if m.get("mailed") else "標記已寄信",
+                             command=lambda: self.toggle_mailed(self.tree.selection()))
         menu.add_command(label="確認名字", command=lambda: self.confirm_members(self.tree.selection()))
         menu.add_command(label="設為我的名字", command=lambda: self.set_me(m))
         menu.add_separator()
@@ -547,7 +539,7 @@ class App:
     def toggle_mailed(self, iids):
         if not self.current:
             return
-        members = [self.member(i) for i in iids if logic.owes_something(self.current, self.member(i))]
+        members = [self.member(i) for i in iids if logic.can_mail(self.current, self.member(i))]
         if members:
             self.set_mailed(members, not all(m.get("mailed", False) for m in members))
 
@@ -655,15 +647,6 @@ class App:
         self.detail.show(self.current, m)
         self.detail.focus_name()
 
-    def confirm_all(self):
-        if not self.current:
-            return
-        for m in self.current["members"]:
-            self.store.confirm(m)
-        self.changed()
-        self.detail.refresh_light()
-        self.set_status("名字已確認，下次截圖會自動認得。")
-
     def all_returned(self):
         if not self.current:
             return
@@ -685,25 +668,6 @@ class App:
         self.tree.selection_set(())
         self.detail.show(self.current, None)
         self.changed()
-
-    def export_csv(self):
-        s = self.current
-        if not s or not s["members"]:
-            return
-        path = filedialog.asksaveasfilename(
-            defaultextension=".csv", initialfile=f"{s['raid']}_{s['id']}.csv", filetypes=[("CSV", "*.csv")])
-        if not path:
-            return
-        with open(path, "w", newline="", encoding="utf-8-sig") as f:  # utf-8-sig so Excel shows Chinese
-            w = csv.writer(f)
-            w.writerow(["名字", "完成次數", "應還箱子", "應還硬幣", "已還", "已寄信"])
-            for m in s["members"]:
-                is_me = m["name"] == s["me"]
-                b, c = logic.member_owed(s, m)
-                yes_no = lambda on: "我" if is_me else ("是" if on else "否")
-                w.writerow([m["name"], m["runs"], "" if is_me else b, "" if is_me else c,
-                            yes_no(m["returned"]), yes_no(m.get("mailed", False))])
-        self.set_status(f"已匯出：{path}")
 
     # ---------- paste + OCR ----------
     def on_paste(self, event=None):

@@ -81,6 +81,7 @@ class SummaryTest(unittest.TestCase):
         s = session(members=[member("a", 100), member("b", 100, returned=True), member("c", 0), member("d", 100)])
         s["members"][3]["mailed"] = True
         self.assertEqual([m["name"] for m in s["members"] if logic.needs_mail(s, m)], ["a"])
+        self.assertEqual([m["name"] for m in s["members"] if logic.can_mail(s, m)], ["a", "d"])  # not b: returned
 
 
 class MailTest(unittest.TestCase):

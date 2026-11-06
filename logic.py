@@ -92,8 +92,13 @@ def outstanding(sessions: list[dict]) -> list[dict]:
     return sorted(rows, key=lambda r: (r["name"], r["created"]))
 
 
+def can_mail(session: dict, member: dict) -> bool:
+    """A reminder only makes sense while something is owed and not yet returned."""
+    return owes_something(session, member) and not member["returned"]
+
+
 def needs_mail(session: dict, member: dict) -> bool:
-    return owes_something(session, member) and not member["returned"] and not member.get("mailed", False)
+    return can_mail(session, member) and not member.get("mailed", False)
 
 
 MAIL_DEFAULT = {"title": "{副本}{完成次數}回{應還箱子}", "body": "{副本}{完成次數}回{應還箱子} 可以寄給我嗎 謝謝"}

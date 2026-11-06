@@ -134,18 +134,43 @@ async def _parse(img: Image.Image) -> Sheet:
         rows.append(Row(cands, runs, parse_left(stat.text) if stat else False,
                         (0, y0, W, y1), (0, y0, int(num_left), y1)))
 
-    font = glyphs.shared()
-    gray = np.asarray(ImageOps.grayscale(img))
+    font, digit_font = glyphs.shared(), glyphs.digits()
+    ink = glyphs.text_mask(np.asarray(img).astype(np.int16))
+    centers = [(r.box[1] + r.box[3]) / 2 for r in rows]
+    pitch = median([b - a for a, b in zip(centers, centers[1:])]) if len(rows) > 1 else 2 * line_h
+    for row, cy in zip(rows, centers):
+        y0, y1 = _text_band(ink, cy, pitch, font.H)
+        row.box, row.name_box = (0, y0, W, y1), (0, y0, int(num_left), y1)
+
+    def read(row):
+        y0, y1 = row.box[1], row.box[3]
+        return font.read(ink[y0:y1, :int(num_left)]), digit_font.read(ink[y0:y1, int(num_left):int(stat_left)])
+
     with ThreadPoolExecutor(min(8, os.cpu_count() or 2)) as pool:  # numpy releases the GIL
-        readings = list(pool.map(lambda r: font.read(gray[r.name_box[1]:r.name_box[3], :r.name_box[2]]), rows))
-    for row, reading in zip(rows, readings):
-        if reading and reading.text:
+        readings = list(pool.map(read, rows))
+    for row, (name, number) in zip(rows, readings):
+        if name and name.text:
             # even an imperfect font match (e.g. one character outside the font) beats OCR guesses
-            row.candidates = [reading.text] + [c for c in row.candidates if c != reading.text]
-            row.exact = reading.sure
+            row.candidates = [name.text] + [c for c in row.candidates if c != name.text]
+            row.exact = name.sure
+        if number and number.sure and number.text.isdigit():
+            row.runs = int(number.text)  # OCR drops some numbers entirely (98, 99 came back empty)
     if games is None and rows:
         games = max((r.runs or 0) for r in rows) or None
     return Sheet(games, rows)
+
+
+def _text_band(ink: np.ndarray, cy: float, pitch: float, height: int, margin: int = 2) -> tuple[int, int]:
+    """Rows of one table line: the `height`-row window with the most text pixels around cy, plus a small margin.
+    Keeps the neighbouring lines' edges out of the crop (they used to read as ˙˙˙ in front of names)."""
+    lo, hi = max(0, int(cy - pitch / 2)), min(ink.shape[0], int(cy + pitch / 2) + 1)
+    profile = ink[lo:hi].sum(axis=1)
+    if len(profile) <= height:
+        return lo, hi
+    sums = np.convolve(profile, np.ones(height, dtype=int), "valid")
+    best = np.flatnonzero(sums == sums.max())
+    top = lo + int(best[len(best) // 2])  # several windows hold all the text when it's short: centre it
+    return max(0, top - margin), min(ink.shape[0], top + height + margin)
 
 
 def _ascii_alnum(text: str) -> int:

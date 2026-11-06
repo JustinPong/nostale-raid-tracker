@@ -89,9 +89,13 @@ class GlyphSet:
         return cls([r[0] for r in rendered], bits, col(2), col(3), col(4))
 
     # ---------- reading ----------
-    def read(self, cell: np.ndarray) -> Reading | None:
-        """cell: grayscale name cell. Text is the bright pixels."""
-        ink = cell > 128
+    def subset(self, chars: str) -> "GlyphSet":
+        """Only these characters, e.g. digits for the run-count column."""
+        idx = np.array([i for i, c in enumerate(self.chars) if c in chars])
+        return GlyphSet([self.chars[i] for i in idx], self.bits[idx], self.lo[idx], self.width[idx], self.adv[idx])
+
+    def read(self, ink: np.ndarray) -> Reading | None:
+        """ink: bool mask of one line of text (see text_mask)."""
         cols = np.nonzero(ink.any(axis=0))[0]
         if not len(cols):
             return None
@@ -149,6 +153,7 @@ class GlyphSet:
 
 
 _shared: GlyphSet | None = None
+_digits: GlyphSet | None = None
 _lock = threading.Lock()
 
 
@@ -159,6 +164,20 @@ def shared() -> GlyphSet:
         if _shared is None:
             _shared = GlyphSet.load(CACHE)
         return _shared
+
+
+def digits() -> GlyphSet:
+    global _digits
+    if _digits is None:
+        _digits = shared().subset("0123456789")
+    return _digits
+
+
+def text_mask(rgb: np.ndarray) -> np.ndarray:
+    """Pixels in the game's text colour (near-white grey, ~235): drops the window border and anything bright
+    showing through the semi-transparent panel, which plain brightness would mistake for ink."""
+    lo, hi = rgb.min(axis=2), rgb.max(axis=2)
+    return (lo >= 215) & (hi - lo <= 12)
 
 
 class _GdiCanvas:
